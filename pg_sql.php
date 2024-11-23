@@ -1,38 +1,59 @@
 <?php
-// sql.php
 session_start();
 
-// Check if credentials are stored in the session
-if (!isset($_SESSION['pg_role']) || !isset($_SESSION['pg_pwd']) || !isset($_SESSION['pg_host']) || !isset($_SESSION['pg_db'])) {
-    http_response_code(403);
-    echo "Unauthorized: No database credentials found in session.";
-    exit();
+header('Content-Type: application/json');
+
+// Handle incoming request
+$data = json_decode(file_get_contents('php://input'), true);
+$action = $data['action'] ?? null;
+
+if ($action === 'disconnect') {
+    // Destroy the session connection
+    unset($_SESSION['pg_sql_connection']);
+    echo json_encode(['success' => true]);
+    exit;
 }
 
-// Get SQL code from the request
-if (isset($_POST['sql_code'])) {
+if (!isset($_SESSION['pg_sql_connection'])) {
+    // Attempt to initiate a new connection
+    if ($action === 'login') {
+        $credentials = $data['credentials'] ?? null;
+        $connection_id = $data['connection_id'] ?? null;
 
-    try {
-        // Create a new PDO instance
-        $dsn = "pgsql:host=".$_SESSION['pg_host'].";dbname=".$_SESSION['pg_db'];
-        $pdo = new PDO($dsn, $_SESSION['pg_role'], $_SESSION['pg_pwd'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-
-        // Execute SQL query
-        $stmt = $pdo->query($$_POST['sql_code']);
-
-        // Fetch all results
-        $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        // Return the results as JSON
-        echo json_encode($results);
-
-    } catch (PDOException $e) {
-        // Handle PDO errors
-        http_response_code(500);
-        echo "Database error: " . $e->getMessage();
+        if ($credentials && $connection_id) {
+            try {
+                $dsn = "pgsql:host={$credentials['host']};dbname={$credentials['dbname']};port={$credentials['port']}";
+                $pdo = new PDO($dsn, $credentials['username'], $credentials['password'], [
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                ]);
+                $_SESSION['pg_sql_connection'] = serialize($pdo);
+                echo json_encode(['success' => true]);
+                exit;
+            } catch (Exception $e) {
+                echo json_encode(['error' => $e->getMessage()]);
+                exit;
+            }
+        }
     }
-} else {
-    http_response_code(400);
-    echo "Bad request: No SQL code provided.";
+    echo json_encode(['error' => 'No active connection']);
+    exit;
+}
+
+// Use the existing connection
+if (isset($_SESSION['pg_sql_connection'])) {
+    $pdo = unserialize($_SESSION['pg_sql_connection']);
+    $query = $data['query'] ?? null;
+
+    if ($query) {
+        try {
+            $stmt = $pdo->query($query);
+            $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            echo json_encode($result);
+        } catch (Exception $e) {
+            echo json_encode(['error' => $e->getMessage()]);
+        }
+    } else {
+        echo json_encode(['error' => 'No query provided']);
+    }
 }
 ?>
