@@ -1,33 +1,37 @@
-// sql.js (already existing file)
-function sql(sql_code, callback) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', 'http://localhost/apps/sql.php', true);
-    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-    xhr.send('sql_code=' + encodeURIComponent(sql_code));
+// pg_sql.js
 
-    xhr.onload = function() {
-        if (xhr.status != 200) {
-            sql_error(`Error ${xhr.status}: ${xhr.statusText}`);
-        } else {
-            try {
-                const response = JSON.parse(xhr.response);
-                if (response.error) {
-                    sql_error(response.error);
-                } else {
-                    callback(response); // Pass the data to the callback function
-                }
-            } catch (e) {
-                sql_error("Invalid JSON response");
-            }
-        }
+(function () {
+  // Use a global variable for the server path
+  const serverPath = window.SERVER_PATH || 'http://localhost'; // Default to localhost if not defined
+
+  function executeSQL(query, onSuccess, onError) {
+    const request = new XMLHttpRequest();
+    const url = `${serverPath}/pgsql_api.php`;
+
+    request.open('POST', url, true);
+    request.setRequestHeader('Content-Type', 'application/json');
+
+    request.onload = function () {
+      if (this.status >= 200 && this.status < 300) {
+        onSuccess(JSON.parse(this.response));
+      } else {
+        onError({
+          status: this.status,
+          statusText: this.statusText,
+        });
+      }
     };
 
-    xhr.onerror = function() {
-        sql_error("Request failed");
+    request.onerror = function () {
+      onError({
+        status: this.status,
+        statusText: this.statusText,
+      });
     };
-}
 
-// Error handling function
-function sql_error(error_text) {
-    console.log("SQL Error: " + error_text);
-}
+    request.send(JSON.stringify({ query }));
+  }
+
+  // Export the function to be accessible globally
+  window.executeSQL = executeSQL;
+})();
