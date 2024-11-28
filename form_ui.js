@@ -216,3 +216,10 @@ function handleExecuteSql(event) {
     initializeFormUi();
   })();
   
+// Dynamically load styles.css
+(function loadStyles() {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = './form_ui.css'; // Adjust the path if necessary
+    document.head.appendChild(link);
+})();
