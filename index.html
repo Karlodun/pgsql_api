@@ -1,22 +1,121 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PG SQL Example</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Testing for pgsql_api</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .test-case {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .test-case h3 {
+            margin: 0 0 10px;
+        }
+        .output {
+            border: 1px solid #ccc;
+            padding: 10px;
+            background-color: #e9e9e9;
+            border-radius: 5px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+        }
+        button {
+            padding: 5px 10px;
+            margin: 5px 0;
+            cursor: pointer;
+            border: 1px solid #0078D7;
+            background-color: #0078D7;
+            color: white;
+            border-radius: 3px;
+        }
+        button:hover {
+            background-color: #005cbf;
+        }
+    </style>
+    <!-- Load main.js as a module -->
+    <script type="module" src="main.js"></script>
+    <!-- Load form_ui.js explicitly since it's optional -->
+    <script src="form_ui.js"></script>
 </head>
 <body>
-  use console.log for tests!
-ex: 
-<pre>
-  pgsql_new_conn({
-  id: 'conn_id',
-  host: 'localhost',
-  user: 'user',
-  password: 'pwd',
-  database: 'db',
-});
-</pre>
-  <script src="main.js"></script>
+    <h1>Interactive Test Cases for pgsql_api</h1>
+
+    <!-- Test Case: Create a New Connection -->
+    <div class="test-case">
+        <h3>Create a New Connection</h3>
+        <p>
+            This test will create a new connection to the PostgreSQL database. 
+            The connection ID will be <strong>"test_conn"</strong>.
+            Change the connection credentials in script bellow this code.
+        </p>
+        <button onclick="testCreateConnection()">Run Test</button>
+        <div id="output-create-connection" class="output"></div>
+    </div>
+
+    <!-- Test Case: Switch Connection -->
+    <div class="test-case">
+        <h3>Switch Connection</h3>
+        <p>
+            This test will switch to the previously created connection <strong>"test_conn"</strong>.
+        </p>
+        <button onclick="testSwitchConnection()">Run Test</button>
+        <div id="output-switch-connection" class="output"></div>
+    </div>
+
+    <!-- Test Case: Execute SQL -->
+    <div class="test-case">
+        <h3>Execute SQL Query</h3>
+        <p>
+            This test will execute the query <strong>SELECT now();</strong> using the active connection.
+            The result should be the current timestamp.
+        </p>
+        <button onclick="testExecuteSQL()">Run Test</button>
+        <div id="output-execute-sql" class="output"></div>
+    </div>
+
+    <script>
+        /**
+         * Test: Create a new connection.
+         */
+        function testCreateConnection() {
+            const credentials = {
+                id: 'test_conn',
+                host: 'localhost',
+                user: 'test_user',
+                password: 'test_password',
+                database: 'test_db',
+            };
+            pgsql_new_conn(credentials);
+            document.getElementById('output-create-connection').textContent =
+                'Attempted to create connection with ID "test_conn". Check console for details.';
+        }
+
+        /**
+         * Test: Switch to an existing connection.
+         */
+        function testSwitchConnection() {
+            pgsql_switch('test_conn');
+            document.getElementById('output-switch-connection').textContent =
+                'Switched to connection "test_conn". Check console for confirmation.';
+        }
+
+        /**
+         * Test: Execute a simple SQL query.
+         */
+        function testExecuteSQL() {
+            const query = 'SELECT now();';
+            pg_sql(query);
+            document.getElementById('output-execute-sql').textContent =
+                `Executed query: ${query}. Check console for results.`;
+        }
+    </script>
 </body>
 </html>
