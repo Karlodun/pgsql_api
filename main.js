@@ -37,8 +37,8 @@ function loadFile(src, type) {
 async function initializeApp() {
   try {
     await loadFile('styles.css', 'css');
-    await loadFile('form_ui.js', 'js');
-    await loadFile('new_conn.js', 'js'); // Ensure this is loaded
+//    await loadFile('form_ui.js', 'js'); // optional and should rather be loaded directly.
+    await loadFile('new_conn.js', 'js');
     await loadFile('switch.js', 'js');
     await loadFile('pg_sql.js', 'js');
     console.log('All scripts loaded successfully!');
