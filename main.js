@@ -36,7 +36,6 @@ function loadFile(src, type) {
  */
 async function initializeApp() {
   try {
-    await loadFile('styles.css', 'css');
 //    await loadFile('form_ui.js', 'js'); // optional and should rather be loaded directly.
     await loadFile('new_conn.js', 'js');
     await loadFile('switch.js', 'js');
