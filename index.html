@@ -47,17 +47,34 @@
 </head>
 <body>
     <h1>Interactive Test Cases for pgsql_api</h1>
+    <p>
+        Each session can keep multiple PostgreSQL connections alive at once. Use the helpers below to
+        register more than one server, switch between them, and run queries without resending
+        passwords on every request. You can also run a single query against a specific connection
+        while keeping your default connection unchanged.
+    </p>
 
     <!-- Test Case: Create a New Connection -->
     <div class="test-case">
         <h3>Create a New Connection</h3>
         <p>
-            This test will create a new connection to the PostgreSQL database. 
+            This test will create a new connection to the PostgreSQL database.
             The connection ID will be <strong>"test_conn"</strong>.
             Change the connection credentials in script bellow this code.
         </p>
         <button onclick="testCreateConnection()">Run Test</button>
         <div id="output-create-connection" class="output"></div>
+    </div>
+
+    <!-- Test Case: Create a Second Connection Without Switching -->
+    <div class="test-case">
+        <h3>Create a Second Connection Without Switching</h3>
+        <p>
+            This demonstrates logging into another server without replacing the active connection. The
+            new ID will be <strong>"reporting_conn"</strong> and will stay idle until switched.
+        </p>
+        <button onclick="testCreateSecondConnection()">Run Test</button>
+        <div id="output-create-connection-2" class="output"></div>
     </div>
 
     <!-- Test Case: Switch Connection -->
@@ -68,6 +85,17 @@
         </p>
         <button onclick="testSwitchConnection()">Run Test</button>
         <div id="output-switch-connection" class="output"></div>
+    </div>
+
+    <!-- Test Case: Run a Query on a Specific Connection Without Switching -->
+    <div class="test-case">
+        <h3>Run Query on a Specific Connection</h3>
+        <p>
+            This test runs a query on <strong>"reporting_conn"</strong> while keeping whatever default
+            connection was already active. No switch is needed for one-off routing.
+        </p>
+        <button onclick="testExecuteSQLReporting()">Run Test</button>
+        <div id="output-execute-sql-reporting" class="output"></div>
     </div>
 
     <!-- Test Case: Execute SQL -->
@@ -85,7 +113,8 @@
         /**
          * Test: Create a new connection.
          */
-        function testCreateConnection() {
+        async function testCreateConnection() {
+            const output = document.getElementById('output-create-connection');
             const credentials = {
                 id: 'test_conn',
                 host: 'localhost',
@@ -93,9 +122,31 @@
                 password: 'test_password',
                 database: 'test_db',
             };
-            pgsql_new_conn(credentials);
-            document.getElementById('output-create-connection').textContent =
-                'Attempted to create connection with ID "test_conn". Check console for details.';
+
+            try {
+                await pgsql_new_conn(credentials);
+                output.textContent = 'Connection "test_conn" created. Session cookie stored.';
+            } catch (error) {
+                output.textContent = `Failed to create connection: ${error}`;
+            }
+        }
+
+        async function testCreateSecondConnection() {
+            const output = document.getElementById('output-create-connection-2');
+            const credentials = {
+                id: 'reporting_conn',
+                host: 'reporting-host',
+                user: 'report_user',
+                password: 'secret',
+                database: 'reporting_db',
+            };
+
+            try {
+                await pgsql_new_conn(credentials, { setActive: false });
+                output.textContent = 'Connection "reporting_conn" registered without switching active session.';
+            } catch (error) {
+                output.textContent = `Failed to create reporting connection: ${error}`;
+            }
         }
 
         /**
@@ -108,13 +159,38 @@
         }
 
         /**
+         * Test: Execute a query against a specific connection without switching defaults.
+         */
+        async function testExecuteSQLReporting() {
+            const output = document.getElementById('output-execute-sql-reporting');
+            const query = 'SELECT now();';
+
+            try {
+                await pg_sql(query, {
+                    connectionId: 'reporting_conn',
+                    onSuccess: (rows) => {
+                        output.textContent = `Reporting query (no switch) returned: ${JSON.stringify(rows)}`;
+                    },
+                });
+            } catch (error) {
+                output.textContent = `Reporting query failed: ${error}`;
+            }
+        }
+
+        /**
          * Test: Execute a simple SQL query.
          */
-        function testExecuteSQL() {
+        async function testExecuteSQL() {
+            const output = document.getElementById('output-execute-sql');
             const query = 'SELECT now();';
-            pg_sql(query);
-            document.getElementById('output-execute-sql').textContent =
-                `Executed query: ${query}. Check console for results.`;
+
+            try {
+                await pg_sql(query, (rows) => {
+                    output.textContent = `Executed query: ${query}. Rows: ${JSON.stringify(rows)}`;
+                });
+            } catch (error) {
+                output.textContent = `Query failed: ${error}`;
+            }
         }
     </script>
 </body>

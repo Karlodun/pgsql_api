@@ -112,9 +112,10 @@
   
       // Create input for SQL
       const sqlInput = document.createElement('textarea');
-      sqlInput.id = 'sql_input';
+      sqlInput.id = 'pg_sql_cli';
       sqlInput.rows = 5;
       sqlInput.style.width = '100%';
+      sqlInput.placeholder = 'SELECT now();';
       fieldset.appendChild(sqlInput);
   
       // Add execute button
@@ -196,19 +197,25 @@
 /**
  * Handles executing an SQL query from the form.
  */
-function handleExecuteSql(event) {
+async function handleExecuteSql(event) {
     event.preventDefault();
-  
+
     // Get the SQL input value
-    const sqlInput = document.getElementById('sql_input').value;
-  
+    const sqlInput = document.getElementById('pg_sql_cli').value;
+
     if (!sqlInput) {
       alert('Please enter an SQL query.');
       return;
     }
-  
-    // Call the pg_sql function to execute the query
-    pg_sql(sqlInput);
+
+    try {
+      await pg_sql(sqlInput, {
+        onSuccess: (rows) => alert(JSON.stringify(rows, null, 2)),
+        onError: (err) => alert(err),
+      });
+    } catch (error) {
+      alert(error);
+    }
   }
   
   

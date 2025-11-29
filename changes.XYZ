@@ -1,0 +1,2 @@
+- Improved pg_sql helper readability by renaming ambiguous callback parameters and documenting the supported call shapes.
+- Left PHP gateway untouched while keeping multi-connection routing intact; no behavioral changes intended beyond clearer client API handling.
