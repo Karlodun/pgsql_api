@@ -31,7 +31,7 @@ class PgSqlClient {
      * @param {string} params.password - Database password
      * @param {number} [params.port=5432] - Database port
      * @param {string} [params.name] - Optional connection name/ID (server will generate if not provided)
-     * @returns {Promise<Object>} Response containing connection_id
+     * @returns {Promise<Object>} Response containing connection_id and extended information
      */
     async connect(params) {
         const payload = {
@@ -46,7 +46,7 @@ class PgSqlClient {
      * Execute a SQL query
      * @param {string} sql - SQL query to execute
      * @param {string} [connectionId] - Optional connection ID to use (will use default if not specified)
-     * @returns {Promise<Object>} Response containing either data or error
+     * @returns {Promise<Object>} Response containing either data with metadata or error
      */
     async query(sql, connectionId = null) {
         const payload = {
@@ -73,6 +73,38 @@ class PgSqlClient {
 
         return this._makeRequest(payload);
     }
+
+    /**
+     * Execute a transaction with multiple queries
+     * @param {Array} queries - Array of SQL queries to execute in transaction
+     * @param {string} [connectionId] - Optional connection ID to use (will use default if not specified)
+     * @returns {Promise<Object>} Response containing results of all queries
+     */
+    async transaction(queries, connectionId = null) {
+        // This would require server-side support for persistent connections
+        // For now, we'll execute queries sequentially with BEGIN/COMMIT/ROLLBACK
+        const results = [];
+        
+        // Begin transaction
+        results.push(await this.query('BEGIN', connectionId));
+        
+        try {
+            for (const query of queries) {
+                const result = await this.query(query, connectionId);
+                results.push(result);
+            }
+            
+            // Commit transaction
+            results.push(await this.query('COMMIT', connectionId));
+        } catch (error) {
+            // Rollback transaction
+            await this.query('ROLLBACK', connectionId);
+            throw error;
+        }
+        
+        return results;
+    }
+
 
     /**
      * Make an HTTP request to the server

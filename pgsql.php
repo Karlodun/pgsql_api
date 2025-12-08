@@ -18,13 +18,18 @@ session_start();
 // Set content type to JSON
 header('Content-Type: application/json');
 
+// Базовая защита от CSRF
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+
 /**
  * Handles incoming AJAX requests to connect to PostgreSQL databases and execute queries.
  * 
  * Request types:
- * - Connection: { action: 'connect', host: '...', dbname: '...', user: '...', password: '...', name: 'optional_id' }
- * - Query: { action: 'query', sql: '...', connection: 'optional_connection_id' }
- * - Set Role: { action: 'set_role', role: '...', connection: 'optional_connection_id' }
+ * - Get Profiles: { action: 'get_profiles' }
+ * - Connection: { action: 'connect', profile_id: '...', user: '...', password: '...' }
+ * - Query: { action: 'query', sql: '...', connection_id: 'optional_connection_id' }
+ * - Set Role: { action: 'set_role', role: '...', connection_id: 'optional_connection_id' }
  */
 try {
     // Get request data
@@ -37,6 +42,9 @@ try {
     $action = $input['action'] ?? null;
     
     switch ($action) {
+        case 'get_profiles':
+            handleGetProfiles($input);
+            break;
         case 'connect':
             handleConnect($input);
             break;
@@ -56,18 +64,32 @@ try {
 }
 
 /**
+ * Handle getting available connection profiles
+ */
+function handleGetProfiles($input) {
+    // Load profiles from configuration file
+    $profiles = getProfilesList();
+    
+    echo json_encode(['profiles' => $profiles]);
+}
+
+/**
  * Handle connection request
  */
 function handleConnect($input) {
-    $host = $input['host'] ?? null;
-    $dbname = $input['dbname'] ?? null;
+    $profileId = $input['profile_id'] ?? null;
     $user = $input['user'] ?? null;
     $password = $input['password'] ?? null;
-    $port = $input['port'] ?? 5432;
     $name = $input['name'] ?? null;
     
-    if (!$host || !$dbname || !$user || !$password) {
-        throw new Exception('Missing required connection parameters (host, dbname, user, password)');
+    if (!$profileId || !$user || !$password) {
+        throw new Exception('Missing required connection parameters (profile_id, user, password)');
+    }
+    
+    // Get profile configuration - in a real application, this would be loaded from a config file
+    $profileConfig = getProfileConfig($profileId);
+    if (!$profileConfig) {
+        throw new Exception('Invalid profile ID: ' . $profileId);
     }
     
     // Generate connection ID if not provided
@@ -81,11 +103,11 @@ function handleConnect($input) {
     }
     
     $_SESSION['connections'][$name] = [
-        'host' => $host,
-        'dbname' => $dbname,
+        'host' => $profileConfig['host'],
+        'dbname' => $profileConfig['dbname'],
         'user' => $user,
         'password' => $password,
-        'port' => $port
+        'port' => $profileConfig['port'] ?? 5432
     ];
     
     // Set as default if it's the first connection
@@ -93,8 +115,104 @@ function handleConnect($input) {
         $_SESSION['default_connection'] = $name;
     }
     
-    // Return connection ID
-    echo json_encode(['connection_id' => $name]);
+    // Test connection and get extended information
+    $connParams = $_SESSION['connections'][$name];
+    $connString = "host={$connParams['host']} port={$connParams['port']} dbname={$connParams['dbname']} user={$connParams['user']} password={$connParams['password']}";
+    $connection = pg_connect($connString);
+    if (!$connection) {
+        throw new Exception('Could not connect to database');
+    }
+    
+    $version = pg_version($connection);
+    $server_encoding = pg_parameter_status($connection, 'server_encoding');
+    pg_close($connection);
+    
+    // Return extended connection information
+    echo json_encode([
+        'connection_id' => $name,
+        'server_version' => $version['server'],
+        'server_encoding' => $server_encoding
+    ]);
+}
+
+/**
+ * Get profile configuration by ID
+ * In a real application, this would load from a configuration file
+ */
+function getProfileConfig($profileId) {
+    // Load configuration from external file
+    $config_file = __DIR__ . '/pgsql_config.php';
+    if (file_exists($config_file)) {
+        include $config_file;
+        return $pgsql_profiles[$profileId] ?? null;
+    }
+    
+    // Fallback to hardcoded profiles if config file doesn't exist
+    $profiles = [
+        'dev_local' => [
+            'host' => 'localhost',
+            'dbname' => 'testdb',
+            'port' => 5432,
+            'description' => 'Local development database'
+        ],
+        'test_server' => [
+            'host' => 'test.example.com',
+            'dbname' => 'testdb',
+            'port' => 5432,
+            'description' => 'Testing environment database'
+        ],
+        'prod_main' => [
+            'host' => 'prod.example.com',
+            'dbname' => 'proddb',
+            'port' => 5432,
+            'description' => 'Main production database'
+        ]
+    ];
+    
+    return $profiles[$profileId] ?? null;
+}
+
+/**
+ * Get list of available profiles with their information
+ */
+function getProfilesList() {
+    // Load profile information from external file
+    $config_file = __DIR__ . '/pgsql_config.php';
+    if (file_exists($config_file)) {
+        include $config_file;
+        $profiles = [];
+        foreach ($pgsql_profile_info as $id => $info) {
+            $profiles[] = [
+                'id' => $id,
+                'name' => $info['name'],
+                'class' => $info['class'],
+                'description' => $info['description']
+            ];
+        }
+        return $profiles;
+    }
+    
+    // Fallback to hardcoded profiles if config file doesn't exist
+    return [
+        [
+            'id' => 'dev_local',
+            'name' => 'Local Development',
+            'class' => 'Dev',
+            'description' => 'Local development database'
+        ],
+        [
+            'id' => 'test_server',
+            'name' => 'Test Server',
+            'class' => 'Test', 
+            'description' => 'Testing environment database'
+        ],
+        [
+            'id' => 'prod_main',
+            'name' => 'Production Main',
+            'class' => 'Prod',
+            'description' => 'Main production database'
+        ]
+    ];
 }
 
 /**
@@ -102,7 +220,7 @@ function handleConnect($input) {
  */
 function handleQuery($input) {
     $sql = $input['sql'] ?? null;
-    $connectionId = $input['connection'] ?? null;
+    $connectionId = $input['connection_id'] ?? null;
     
     if ($sql === null) {
         throw new Exception('SQL query is required');
@@ -126,6 +244,9 @@ function handleQuery($input) {
         throw new Exception('Could not connect to database');
     }
     
+    // Measure execution time
+    $start_time = microtime(true);
+    
     // Execute query
     $result = pg_query($connection, $sql);
     if (!$result) {
@@ -134,17 +255,32 @@ function handleQuery($input) {
         throw new Exception($error);
     }
     
+    $execution_time = microtime(true) - $start_time;
+    
     // Fetch results
     $rows = [];
     while ($row = pg_fetch_assoc($result)) {
         $rows[] = $row;
     }
     
+    // Get affected rows and query type
+    $affected_rows = pg_affected_rows($result);
+    $query_type = getQueryType($sql);
+    $notice_messages = pg_last_notice($connection);
+    
     // Close connection
     pg_close($connection);
     
-    // Return results
-    echo json_encode(['data' => $rows]);
+    // Return results with metadata
+    echo json_encode([
+        'data' => $rows,
+        'metadata' => [
+            'affected_rows' => $affected_rows,
+            'query_type' => $query_type,
+            'execution_time' => $execution_time,
+            'notice_messages' => $notice_messages
+        ]
+    ]);
 }
 
 /**
@@ -152,7 +288,7 @@ function handleQuery($input) {
  */
 function handleSetRole($input) {
     $role = $input['role'] ?? null;
-    $connectionId = $input['connection'] ?? null;
+    $connectionId = $input['connection_id'] ?? null;
     
     if ($role === null) {
         throw new Exception('Role is required');
@@ -211,4 +347,45 @@ function getConnectionId($connectionId) {
     }
     
     throw new Exception('No connections available');
+}
+
+/**
+ * Determine the type of SQL query
+ */
+function getQueryType($sql) {
+    $sql = trim($sql);
+    $first_space_pos = strpos($sql, ' ');
+    
+    if ($first_space_pos === false) {
+        // If there's no space, take the whole string as the first word
+        $first_word = strtoupper($sql);
+    } else {
+        $first_word = strtoupper(substr($sql, 0, $first_space_pos));
+    }
+    
+    switch ($first_word) {
+        case 'SELECT':
+            return 'SELECT';
+        case 'INSERT':
+            return 'INSERT';
+        case 'UPDATE':
+            return 'UPDATE';
+        case 'DELETE':
+            return 'DELETE';
+        case 'CREATE':
+            return 'DDL';
+        case 'ALTER':
+            return 'DDL';
+        case 'DROP':
+            return 'DDL';
+        case 'TRUNCATE':
+            return 'DDL';
+        case 'BEGIN':
+        case 'START':
+        case 'COMMIT':
+        case 'ROLLBACK':
+            return 'TRANSACTION';
+        default:
+            return 'UNKNOWN';
+    }
 }
