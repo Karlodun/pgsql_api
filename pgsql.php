@@ -1,391 +1,158 @@
 <?php
-/**
- * Lightweight PostgreSQL API Server
- * 
- * This script provides a minimal interface for executing PostgreSQL queries via AJAX.
- * It stores connection parameters in PHP session and creates connections on-demand.
- * 
- * Security model: No additional user management or permissions - everything is handled by PostgreSQL.
- * The user credentials are the same as those used to connect to PostgreSQL directly.
- * 
- * Connection parameters are stored in PHP session, but actual connections are created
- * only when needed and closed after each request.
- */
+declare(strict_types=1);
 
-// Start session to store connection parameters
+session_set_cookie_params([
+    'httponly' => true,
+    'secure' => true,
+    'samesite' => 'Strict',
+]);
+
 session_start();
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store');
 
-// Set content type to JSON
-header('Content-Type: application/json');
+require_once __DIR__ . '/pgsql_config.php';
 
-// Базовая защита от CSRF
-header('X-Content-Type-Options: nosniff');
-header('X-Frame-Options: DENY');
+$_SESSION['connections'] ??= [];
+$_SESSION['default_connection'] ??= null;
 
-/**
- * Handles incoming AJAX requests to connect to PostgreSQL databases and execute queries.
- * 
- * Request types:
- * - Get Profiles: { action: 'get_profiles' }
- * - Connection: { action: 'connect', profile_id: '...', user: '...', password: '...' }
- * - Query: { action: 'query', sql: '...', connection_id: 'optional_connection_id' }
- * - Set Role: { action: 'set_role', role: '...', connection_id: 'optional_connection_id' }
- */
-try {
-    // Get request data
-    $input = json_decode(file_get_contents('php://input'), true);
-    
-    if (!$input) {
-        throw new Exception('Invalid JSON input');
-    }
-    
-    $action = $input['action'] ?? null;
-    
-    switch ($action) {
-        case 'get_profiles':
-            handleGetProfiles($input);
-            break;
-        case 'connect':
-            handleConnect($input);
-            break;
-        case 'query':
-            handleQuery($input);
-            break;
-        case 'set_role':
-            handleSetRole($input);
-            break;
-        default:
-            throw new Exception('Invalid action specified');
-    }
-} catch (Exception $e) {
-    // Return error as JSON
-    echo json_encode(['error' => $e->getMessage()]);
+function j($x): void {
+    echo json_encode($x, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
 
-/**
- * Handle getting available connection profiles
- */
-function handleGetProfiles($input) {
-    // Load profiles from configuration file
-    $profiles = getProfilesList();
-    
-    echo json_encode(['profiles' => $profiles]);
-}
+function random_conn_id(int $len = 4, int $tries = 10): string {
+    // Human-friendly, URL-safe alphabet (no 0/O, no I/l/1)
+    $alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz_';
+    $max = strlen($alphabet) - 1;
 
-/**
- * Handle connection request
- */
-function handleConnect($input) {
-    $profileId = $input['profile_id'] ?? null;
-    $user = $input['user'] ?? null;
-    $password = $input['password'] ?? null;
-    $name = $input['name'] ?? null;
-    
-    if (!$profileId || !$user || !$password) {
-        throw new Exception('Missing required connection parameters (profile_id, user, password)');
-    }
-    
-    // Get profile configuration - in a real application, this would be loaded from a config file
-    $profileConfig = getProfileConfig($profileId);
-    if (!$profileConfig) {
-        throw new Exception('Invalid profile ID: ' . $profileId);
-    }
-    
-    // Generate connection ID if not provided
-    if (!$name) {
-        $name = uniqid('conn_', true);
-    }
-    
-    // Store connection parameters in session
-    if (!isset($_SESSION['connections'])) {
-        $_SESSION['connections'] = [];
-    }
-    
-    $_SESSION['connections'][$name] = [
-        'host' => $profileConfig['host'],
-        'dbname' => $profileConfig['dbname'],
-        'user' => $user,
-        'password' => $password,
-        'port' => $profileConfig['port'] ?? 5432
-    ];
-    
-    // Set as default if it's the first connection
-    if (count($_SESSION['connections']) === 1) {
-        $_SESSION['default_connection'] = $name;
-    }
-    
-    // Test connection and get extended information
-    $connParams = $_SESSION['connections'][$name];
-    $connString = "host={$connParams['host']} port={$connParams['port']} dbname={$connParams['dbname']} user={$connParams['user']} password={$connParams['password']}";
-    $connection = pg_connect($connString);
-    if (!$connection) {
-        throw new Exception('Could not connect to database');
-    }
-    
-    $version = pg_version($connection);
-    $server_encoding = pg_parameter_status($connection, 'server_encoding');
-    pg_close($connection);
-    
-    // Return extended connection information
-    echo json_encode([
-        'connection_id' => $name,
-        'server_version' => $version['server'],
-        'server_encoding' => $server_encoding
-    ]);
-}
+    for ($t = 0; $t < $tries; $t++) {
+        $bytes = random_bytes($len);
+        $id = '';
 
-/**
- * Get profile configuration by ID
- * In a real application, this would load from a configuration file
- */
-function getProfileConfig($profileId) {
-    // Load configuration from external file
-    $config_file = __DIR__ . '/pgsql_config.php';
-    if (file_exists($config_file)) {
-        include $config_file;
-        return $pgsql_profiles[$profileId] ?? null;
-    }
-    
-    // Fallback to hardcoded profiles if config file doesn't exist
-    $profiles = [
-        'dev_local' => [
-            'host' => 'localhost',
-            'dbname' => 'testdb',
-            'port' => 5432,
-            'description' => 'Local development database'
-        ],
-        'test_server' => [
-            'host' => 'test.example.com',
-            'dbname' => 'testdb',
-            'port' => 5432,
-            'description' => 'Testing environment database'
-        ],
-        'prod_main' => [
-            'host' => 'prod.example.com',
-            'dbname' => 'proddb',
-            'port' => 5432,
-            'description' => 'Main production database'
-        ]
-    ];
-    
-    return $profiles[$profileId] ?? null;
-}
-
-/**
- * Get list of available profiles with their information
- */
-function getProfilesList() {
-    // Load profile information from external file
-    $config_file = __DIR__ . '/pgsql_config.php';
-    if (file_exists($config_file)) {
-        include $config_file;
-        $profiles = [];
-        foreach ($pgsql_profile_info as $id => $info) {
-            $profiles[] = [
-                'id' => $id,
-                'name' => $info['name'],
-                'class' => $info['class'],
-                'description' => $info['description']
-            ];
+        for ($i = 0; $i < $len; $i++) {
+            $id .= $alphabet[ord($bytes[$i]) % ($max + 1)];
         }
-        return $profiles;
-    }
-    
-    // Fallback to hardcoded profiles if config file doesn't exist
-    return [
-        [
-            'id' => 'dev_local',
-            'name' => 'Local Development',
-            'class' => 'Dev',
-            'description' => 'Local development database'
-        ],
-        [
-            'id' => 'test_server',
-            'name' => 'Test Server',
-            'class' => 'Test', 
-            'description' => 'Testing environment database'
-        ],
-        [
-            'id' => 'prod_main',
-            'name' => 'Production Main',
-            'class' => 'Prod',
-            'description' => 'Main production database'
-        ]
-    ];
-}
 
-/**
- * Handle query execution
- */
-function handleQuery($input) {
-    $sql = $input['sql'] ?? null;
-    $connectionId = $input['connection_id'] ?? null;
-    
-    if ($sql === null) {
-        throw new Exception('SQL query is required');
+        if (!isset($_SESSION['connections'][$id])) {
+            return $id;
+        }
     }
-    
-    // Get connection to use
-    $connectionId = getConnectionId($connectionId);
-    
-    // Get connection parameters
-    $connParams = $_SESSION['connections'][$connectionId] ?? null;
-    if (!$connParams) {
-        throw new Exception('Connection not found: ' . $connectionId);
-    }
-    
-    // Create connection string
-    $connString = "host={$connParams['host']} port={$connParams['port']} dbname={$connParams['dbname']} user={$connParams['user']} password={$connParams['password']}";
-    
-    // Connect to database
-    $connection = pg_connect($connString);
-    if (!$connection) {
-        throw new Exception('Could not connect to database');
-    }
-    
-    // Measure execution time
-    $start_time = microtime(true);
-    
-    // Execute query
-    $result = pg_query($connection, $sql);
-    if (!$result) {
-        $error = pg_last_error($connection);
-        pg_close($connection);
-        throw new Exception($error);
-    }
-    
-    $execution_time = microtime(true) - $start_time;
-    
-    // Fetch results
-    $rows = [];
-    while ($row = pg_fetch_assoc($result)) {
-        $rows[] = $row;
-    }
-    
-    // Get affected rows and query type
-    $affected_rows = pg_affected_rows($result);
-    $query_type = getQueryType($sql);
-    $notice_messages = pg_last_notice($connection);
-    
-    // Close connection
-    pg_close($connection);
-    
-    // Return results with metadata
-    echo json_encode([
-        'data' => $rows,
-        'metadata' => [
-            'affected_rows' => $affected_rows,
-            'query_type' => $query_type,
-            'execution_time' => $execution_time,
-            'notice_messages' => $notice_messages
-        ]
+
+    // If we are here — something is seriously wrong
+    j([
+        'error' => 'Unable to generate unique connection id after '
+            . $tries . ' attempts. Increase id length or check session state.'
     ]);
 }
 
-/**
- * Handle changing current role
- */
-function handleSetRole($input) {
-    $role = $input['role'] ?? null;
-    $connectionId = $input['connection_id'] ?? null;
-    
-    if ($role === null) {
-        throw new Exception('Role is required');
+$in = json_decode(file_get_contents('php://input'), true); // if broken -> broken
+$action = $in['action'] ?? null;
+
+if (!$action) j(['error' => 'Missing action']);
+
+if ('get_profiles' === $action) {
+    $out = [];
+    foreach ($pgsql_profiles as $profile_id => $p) {
+        $out[$profile_id] = [
+            'name' => $p['name'] ?? $profile_id,
+            'class' => $p['class'] ?? null,
+            'description' => $p['description'] ?? null,
+        ];
     }
-    
-    // Get connection to use
-    $connectionId = getConnectionId($connectionId);
-    
-    // Get connection parameters
-    $connParams = $_SESSION['connections'][$connectionId] ?? null;
-    if (!$connParams) {
-        throw new Exception('Connection not found: ' . $connectionId);
-    }
-    
-    // Create connection string
-    $connString = "host={$connParams['host']} port={$connParams['port']} dbname={$connParams['dbname']} user={$connParams['user']} password={$connParams['password']}";
-    
-    // Connect to database
-    $connection = pg_connect($connString);
-    if (!$connection) {
-        throw new Exception('Could not connect to database');
-    }
-    
-    // Set role
-    $sql = "SET ROLE '$role'";
-    $result = pg_query($connection, $sql);
-    if (!$result) {
-        $error = pg_last_error($connection);
-        pg_close($connection);
-        throw new Exception($error);
-    }
-    
-    // Close connection
-    pg_close($connection);
-    
-    // Return success
-    echo json_encode(['success' => true]);
+    j(['data' => $out]);
 }
 
-/**
- * Get connection ID to use, with fallback to default
- */
-function getConnectionId($connectionId) {
-    if ($connectionId) {
-        return $connectionId;
+if ('connect' === $action) {
+    $in['conn_id'] ??= random_conn_id(4);
+    $in['credentials'] ??= [];
+    // limiting app_name to 64 chars:
+    if (isset($in['credentials']['application_name'])) $in['credentials']['application_name'] = substr((string)$in['credentials']['application_name'], 0, 64);
+
+    $p = $pgsql_profiles[$in['profile_id']] ?? null;
+    if (!is_array($p)) j(['error' => 'Unknown profile_id: ' . $in['profile_id']]);
+
+    // connecting to db. taking $c vars before $p, so that profile can override injected connection variables for security reasons!
+    if (!$pg = @pg_connect( array_merge( $in['credentials'], $p ) )) j(['error' => 'Could not connect to database']);
+
+    if (!$res_dbrole = @pg_query($pg, "select session_user, current_role")) {
+        $e = pg_last_error($pg) ?: 'Could not obtain session and current user';
+        @pg_close($pg);
+        j(['error' => $e]);
     }
-    
-    if (isset($_SESSION['default_connection'])) {
-        return $_SESSION['default_connection'];
-    }
-    
-    // If no specific connection and no default, use the first available
-    if (isset($_SESSION['connections']) && count($_SESSION['connections']) > 0) {
-        $keys = array_keys($_SESSION['connections']);
-        return $keys[0];
-    }
-    
-    throw new Exception('No connections available');
+
+    $val_dbrole = pg_fetch_assoc($res_dbrole) ?: []; pg_free_result($res_dbrole);
+
+    $_SESSION['connections'][$in['conn_id']] = array_merge(
+        $in['credentials'],
+        ['profile_id'   => $in['profile_id']],
+        $val_dbrole
+        );
+
+    $_SESSION['default_connection'] ??= $in['conn_id'];
+
+    @pg_close($pg);
+
+    j([ 'data' => array_merge( ['conn_id' => $in['conn_id']], $val_dbrole ) ]);
 }
 
-/**
- * Determine the type of SQL query
- */
-function getQueryType($sql) {
-    $sql = trim($sql);
-    $first_space_pos = strpos($sql, ' ');
-    
-    if ($first_space_pos === false) {
-        // If there's no space, take the whole string as the first word
-        $first_word = strtoupper($sql);
-    } else {
-        $first_word = strtoupper(substr($sql, 0, $first_space_pos));
-    }
-    
-    switch ($first_word) {
-        case 'SELECT':
-            return 'SELECT';
-        case 'INSERT':
-            return 'INSERT';
-        case 'UPDATE':
-            return 'UPDATE';
-        case 'DELETE':
-            return 'DELETE';
-        case 'CREATE':
-            return 'DDL';
-        case 'ALTER':
-            return 'DDL';
-        case 'DROP':
-            return 'DDL';
-        case 'TRUNCATE':
-            return 'DDL';
-        case 'BEGIN':
-        case 'START':
-        case 'COMMIT':
-        case 'ROLLBACK':
-            return 'TRANSACTION';
-        default:
-            return 'UNKNOWN';
+
+// all following actions can only happen if we have a valid connection. we pick a connection id:
+$conn_id = $in['conn_id'] ?? $_SESSION['default_connection'];
+// handling missing or broken connections:
+if (!isset($_SESSION['connections'][$conn_id])) j(['error' => 'Connection not found: ' . $conn_id]);
+
+$c = $_SESSION['connections'][$conn_id]; //connection
+$p = $pgsql_profiles[$_SESSION['connections'][$conn_id]['profile_id']] ?? null; //profile
+if (!is_array($p)) j(['error' => 'Unknown profile_id: ' . ($c['profile_id'] ?? '')]);
+
+// connecting to db. taking $c vars before $p, so that profile can override injected connection variables for security reasons!
+if (!$pg = @pg_connect( array_merge( $c, $p ) )) j(['error' => 'Could not connect to database']);
+
+// if needed we can supply different current role to act from:
+if ('set_role' === $action) {
+    $_SESSION['connections'][$conn_id]['current_role'] = $in['role']; // let it explode if missing, postgres will return an error.
+    @pg_close($pg);
+    j(['data' => ['current_role' => $in['role']]]);
+}
+
+// changing current role for upcoming queries, if we have one:
+$role = $c['current_role'] ?? null;
+if ($role) {
+    if (!@pg_query($pg, 'SET ROLE ' . pg_escape_identifier($pg, (string)$role))) {
+        j(['error' => pg_last_error($pg) ?: 'SET ROLE failed']);
     }
 }
+
+if ('list_roles' === $action) {
+    $res = @pg_query($pg, "
+        SELECT json_build_object(
+            'all_roles',
+                json_agg(r.rolname ORDER BY r.rolname)
+                    FILTER (WHERE pg_has_role(session_user, r.oid, 'USAGE')),
+            'current_roles',
+                json_agg(r.rolname ORDER BY r.rolname)
+                    FILTER (WHERE pg_has_role(current_user, r.oid, 'USAGE'))
+        ) AS roles
+        FROM pg_roles r
+    ");
+    if (!$res) { $e = pg_last_error($pg) ?: 'Query failed'; @pg_close($pg); j(['error' => $e]); }
+
+    $row = pg_fetch_assoc($res);
+    @pg_close($pg);
+    j(['data' => $row['roles']]);
+} 
+
+if ('query' === $action) {
+    $res = @pg_query($pg, $in['sql']);
+    if (!$res) j(['error' => pg_last_error($pg) ?: 'Query failed']);
+
+    $rows = pg_fetch_all($res);
+    $meta = ['affected_rows' => pg_affected_rows($res)];
+
+    @pg_close($pg);
+
+    j(['data' => $rows ?: [], 'meta' => $meta]);
+}
+
+j(['error' => 'Invalid action: ' . $action]);

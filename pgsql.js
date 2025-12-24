@@ -1,146 +1,165 @@
-/**
- * Lightweight PostgreSQL API Client
- * 
- * This JavaScript library provides a minimal interface for communicating with the
- * PostgreSQL API server (pgsql.php). It handles connection management and query
- * execution with a focus on simplicity and directness.
- * 
- * Security model: No additional user management or permissions - everything is 
- * handled by PostgreSQL. The user credentials are the same as those used to 
- * connect to PostgreSQL directly.
- * 
- * The client stores connection parameters and sends them with each request,
- * relying on the server to manage actual database connections.
- */
+/* pgsql.js
+   Minimal browser client for pgsql.php
+   - No magic
+   - No client-side auth
+   - Session handled via cookies (fetch credentials: 'include')
+*/
+(function (global) {
+  "use strict";
 
-class PgSqlClient {
-    /**
-     * Create a new PostgreSQL API client
-     * @param {string} serverUrl - URL to the pgsql.php server endpoint
-     */
-    constructor(serverUrl) {
-        this.serverUrl = serverUrl;
+  function defaultBaseUrl() {
+    // Default: pgsql.php in the same directory as this pgsql.js
+    const cs = document.currentScript;
+    if (!cs || !cs.src) return "pgsql.php";
+
+    const url = new URL(cs.src, window.location.href);
+    const path = url.pathname;
+    const dir = path.slice(0, path.lastIndexOf("/") + 1);
+    return dir + "pgsql.php";
+  }
+
+  function jsonHeaders(extra) {
+    const h = { "Content-Type": "application/json; charset=utf-8" };
+    if (extra && typeof extra === "object") {
+      for (const k of Object.keys(extra)) h[k] = extra[k];
+    }
+    return h;
+  }
+
+  async function readJsonOrThrow(resp) {
+    // If server returns non-JSON, this will throw. Good. Let it explode.
+    const out = await resp.json();
+
+    if (!resp.ok) {
+      // Prefer server error payload when available
+      const msg =
+        out && typeof out === "object" && out.error
+          ? String(out.error)
+          : `HTTP ${resp.status} ${resp.statusText}`;
+      const e = new Error(msg);
+      e.status = resp.status;
+      e.payload = out;
+      throw e;
     }
 
-    /**
-     * Create a new database connection
-     * @param {Object} params - Connection parameters
-     * @param {string} params.host - Database host
-     * @param {string} params.dbname - Database name
-     * @param {string} params.user - Database user
-     * @param {string} params.password - Database password
-     * @param {number} [params.port=5432] - Database port
-     * @param {string} [params.name] - Optional connection name/ID (server will generate if not provided)
-     * @returns {Promise<Object>} Response containing connection_id and extended information
-     */
-    async connect(params) {
-        const payload = {
-            action: 'connect',
-            ...params
-        };
-
-        return this._makeRequest(payload);
+    if (out && typeof out === "object" && out.error) {
+      const e = new Error(String(out.error));
+      e.status = resp.status;
+      e.payload = out;
+      throw e;
     }
 
-    /**
-     * Execute a SQL query
-     * @param {string} sql - SQL query to execute
-     * @param {string} [connectionId] - Optional connection ID to use (will use default if not specified)
-     * @returns {Promise<Object>} Response containing either data with metadata or error
-     */
-    async query(sql, connectionId = null) {
-        const payload = {
-            action: 'query',
-            sql: sql,
-            connection: connectionId
-        };
+    return out;
+  }
 
-        return this._makeRequest(payload);
+  class Pgsql {
+    constructor(opts) {
+      const o = opts && typeof opts === "object" ? opts : {};
+
+      this.baseUrl = typeof o.baseUrl === "string" && o.baseUrl.length
+        ? o.baseUrl
+        : defaultBaseUrl();
+
+      // Optional headers (e.g., you might set X-Requested-With)
+      this.headers = o.headers && typeof o.headers === "object" ? o.headers : null;
+
+      // If you want to pin a connection id as “default” on client side too
+      this.connId = typeof o.connId === "string" && o.connId.length ? o.connId : null;
+
+      // Default application_name to help you see clients in pg_stat_activity
+      this.applicationName =
+        typeof o.applicationName === "string" && o.applicationName.length
+          ? o.applicationName
+          : null;
     }
 
-    /**
-     * Set the current role in the database
-     * @param {string} role - Role to set as current role
-     * @param {string} [connectionId] - Optional connection ID to use (will use default if not specified)
-     * @returns {Promise<Object>} Response containing success status or error
-     */
-    async setRole(role, connectionId = null) {
-        const payload = {
-            action: 'set_role',
-            role: role,
-            connection: connectionId
-        };
+    async request(action, payload, opts) {
+      const p = payload && typeof payload === "object" ? payload : {};
+      const o = opts && typeof opts === "object" ? opts : {};
 
-        return this._makeRequest(payload);
+      // Build request body
+      const body = { action, ...p };
+
+      // When caller did not pass conn_id, we may use pinned this.connId
+      if (!("conn_id" in body) && this.connId) body.conn_id = this.connId;
+
+      const resp = await fetch(this.baseUrl, {
+        method: "POST",
+        credentials: "include",
+        headers: jsonHeaders(this.headers),
+        body: JSON.stringify(body),
+        signal: o.signal,
+      });
+
+      return readJsonOrThrow(resp);
     }
 
-    /**
-     * Execute a transaction with multiple queries
-     * @param {Array} queries - Array of SQL queries to execute in transaction
-     * @param {string} [connectionId] - Optional connection ID to use (will use default if not specified)
-     * @returns {Promise<Object>} Response containing results of all queries
-     */
-    async transaction(queries, connectionId = null) {
-        // This would require server-side support for persistent connections
-        // For now, we'll execute queries sequentially with BEGIN/COMMIT/ROLLBACK
-        const results = [];
-        
-        // Begin transaction
-        results.push(await this.query('BEGIN', connectionId));
-        
-        try {
-            for (const query of queries) {
-                const result = await this.query(query, connectionId);
-                results.push(result);
-            }
-            
-            // Commit transaction
-            results.push(await this.query('COMMIT', connectionId));
-        } catch (error) {
-            // Rollback transaction
-            await this.query('ROLLBACK', connectionId);
-            throw error;
-        }
-        
-        return results;
+    // --- API methods ---
+
+    async getProfiles(opts) {
+      const out = await this.request("get_profiles", {}, opts);
+      return out.data;
     }
 
+    async connect(profileId, user, password, opts) {
+      const o = opts && typeof opts === "object" ? opts : {};
+      const credentials = {
+        user: String(user),
+        password: String(password),
+      };
 
-    /**
-     * Make an HTTP request to the server
-     * @private
-     */
-    async _makeRequest(payload) {
-        const response = await fetch(this.serverUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        });
+      if (this.applicationName && !("application_name" in (o.credentials || {}))) {
+        credentials.application_name = this.applicationName;
+      }
 
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
+      // Allow per-call override/extra credentials (e.g. application_name)
+      if (o.credentials && typeof o.credentials === "object") {
+        for (const k of Object.keys(o.credentials)) credentials[k] = o.credentials[k];
+      }
 
-        const result = await response.json();
-        
-        // If the server returned an error, throw it
-        if (result.error) {
-            throw new Error(result.error);
-        }
+      const payload = {
+        profile_id: String(profileId),
+        credentials,
+      };
 
-        return result;
+      if (o.connId) payload.conn_id = String(o.connId);
+
+      const out = await this.request("connect", payload, o);
+
+      // Pin connId on client for convenience
+      if (out && out.data && out.data.conn_id) this.connId = out.data.conn_id;
+
+      return out.data;
     }
-}
 
-// Export the class for use in other modules
-// In a browser environment, we'll attach it to the global window object
-if (typeof window !== 'undefined') {
-    window.PgSqlClient = PgSqlClient;
-}
+    async setRole(role, opts) {
+      const payload = { role: role };
+      const out = await this.request("set_role", payload, opts);
+      return out.data;
+    }
 
-// For Node.js environments, we'll use module.exports
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = PgSqlClient;
-}
+    async listRoles(opts) {
+      const out = await this.request("list_roles", {}, opts);
+      // backend returns JSON string (from json_build_object) or an object depending on pg behavior
+      // If it is a string, parse it. If it is already object, return as-is.
+      const d = out.data;
+      if (typeof d === "string") return JSON.parse(d);
+      return d;
+    }
+
+    async query(sql, opts) {
+      const payload = { sql: String(sql) };
+      const out = await this.request("query", payload, opts);
+      return out; // {data, meta}
+    }
+  }
+
+  // Friendly factory
+  function createPgsql(opts) {
+    return new Pgsql(opts);
+  }
+
+  // Export to window
+  global.Pgsql = Pgsql;
+  global.createPgsql = createPgsql;
+})(window);
