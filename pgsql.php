@@ -46,6 +46,25 @@ function random_conn_id(int $len = 4, int $tries = 10): string {
     ]);
 }
 
+function pg_connection(array $connection, array $profile): mixed
+{
+    $p = array_merge($connection, $profile);
+
+    $keys = ['service','host','hostaddr','port','dbname','user','password','sslmode','connect_timeout','options','application_name'];
+
+    $parts = [];
+    foreach ($keys as $k) {
+        if (!isset($p[$k]) || $p[$k] === '') continue;
+        $v = (string)$p[$k];
+        if (preg_match('/[\s\'\\\\]/', $v)) $v = "'" . str_replace(["\\","'"], ["\\\\","\\'"], $v) . "'";
+        $parts[] = $k . '=' . $v;
+    }
+
+    if (!$pg = @pg_connect(implode(' ', $parts))) j(['error' => 'Could not connect to database', 'details' => pg_last_error() ?: 'pg_connect() failed']);
+    return $pg;
+}
+
+
 $in = json_decode(file_get_contents('php://input'), true); // if broken -> broken
 $action = $in['action'] ?? null;
 
@@ -65,15 +84,14 @@ if ('get_profiles' === $action) {
 
 if ('connect' === $action) {
     $in['conn_id'] ??= random_conn_id(4);
-    $in['credentials'] ??= [];
+    $c = $in['credentials'] ?? [];
     // limiting app_name to 64 chars:
-    if (isset($in['credentials']['application_name'])) $in['credentials']['application_name'] = substr((string)$in['credentials']['application_name'], 0, 64);
+    if (isset($c['application_name'])) $c['application_name'] = substr((string)$c['application_name'], 0, 64);
 
     $p = $pgsql_profiles[$in['profile_id']] ?? null;
     if (!is_array($p)) j(['error' => 'Unknown profile_id: ' . $in['profile_id']]);
 
-    // connecting to db. taking $c vars before $p, so that profile can override injected connection variables for security reasons!
-    if (!$pg = @pg_connect( array_merge( $in['credentials'], $p ) )) j(['error' => 'Could not connect to database']);
+    $pg = pg_connection($c, $p);
 
     if (!$res_dbrole = @pg_query($pg, "select session_user, current_role")) {
         $e = pg_last_error($pg) ?: 'Could not obtain session and current user';
@@ -84,7 +102,7 @@ if ('connect' === $action) {
     $val_dbrole = pg_fetch_assoc($res_dbrole) ?: []; pg_free_result($res_dbrole);
 
     $_SESSION['connections'][$in['conn_id']] = array_merge(
-        $in['credentials'],
+        $c,
         ['profile_id'   => $in['profile_id']],
         $val_dbrole
         );
@@ -103,15 +121,13 @@ $conn_id = $in['conn_id'] ?? $_SESSION['default_connection'];
 if (!isset($_SESSION['connections'][$conn_id])) j(['error' => 'Connection not found: ' . $conn_id]);
 
 $c = $_SESSION['connections'][$conn_id]; //connection
-$p = $pgsql_profiles[$_SESSION['connections'][$conn_id]['profile_id']] ?? null; //profile
+$p = $pgsql_profiles[$c['profile_id']] ?? null; //profile
 if (!is_array($p)) j(['error' => 'Unknown profile_id: ' . ($c['profile_id'] ?? '')]);
 
-// connecting to db. taking $c vars before $p, so that profile can override injected connection variables for security reasons!
-if (!$pg = @pg_connect( array_merge( $c, $p ) )) j(['error' => 'Could not connect to database']);
-
+$pg = pg_connection($c, $p);
 // if needed we can supply different current role to act from:
 if ('set_role' === $action) {
-    $_SESSION['connections'][$conn_id]['current_role'] = $in['role']; // let it explode if missing, postgres will return an error.
+    $c['current_role'] = $in['role']; // let it explode if missing, postgres will return an error.
     @pg_close($pg);
     j(['data' => ['current_role' => $in['role']]]);
 }
