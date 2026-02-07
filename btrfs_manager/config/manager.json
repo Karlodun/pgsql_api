@@ -1,0 +1,48 @@
+{
+  "app": {
+    "name": "BTRFS Manager",
+    "version": "0.1.0",
+    "zenbox_name": "BTRFS Zenbox",
+    "timezone": "UTC"
+  },
+  "security": {
+    "local_only": true,
+    "sudo_ttl_minutes": 10,
+    "allowed_commands": [
+      "btrfs",
+      "mount",
+      "umount",
+      "lsblk",
+      "blkid"
+    ]
+  },
+  "hosts": [
+    {
+      "id": "local",
+      "name": "Local Host",
+      "address": "127.0.0.1"
+    }
+  ],
+  "snapshot_policies": [
+    {
+      "id": "hourly",
+      "name": "Hourly",
+      "cron": "0 * * * *",
+      "retention": {
+        "keep_hours": 24,
+        "keep_days": 7
+      }
+    }
+  ],
+  "zenbox": {
+    "root_dir": "/var/zenbox",
+    "max_instances": 10,
+    "services": [
+      {
+        "name": "postgres",
+        "data_dir": "/var/lib/postgresql/15/main",
+        "base_port": 5433
+      }
+    ]
+  }
+}
