@@ -1,0 +1,40 @@
+{
+  "pools": [
+    {
+      "id": "pool-1",
+      "name": "data_pool",
+      "raid": "raid1",
+      "total_gb": 2048,
+      "used_gb": 640,
+      "tier": "hot"
+    }
+  ],
+  "devices": [
+    {
+      "id": "dev-1",
+      "name": "/dev/sda",
+      "type": "ssd",
+      "size_gb": 1024,
+      "pool_id": "pool-1",
+      "status": "ok"
+    },
+    {
+      "id": "dev-2",
+      "name": "/dev/sdb",
+      "type": "ssd",
+      "size_gb": 1024,
+      "pool_id": "pool-1",
+      "status": "ok"
+    }
+  ],
+  "snapshots": [
+    {
+      "id": "snap-001",
+      "pool_id": "pool-1",
+      "path": "/data/.snapshots/hourly-001",
+      "created_at": "2024-06-01T10:00:00Z",
+      "policy": "hourly"
+    }
+  ],
+  "operations": []
+}
