@@ -1,0 +1,25 @@
+[package]
+name = "notifyd"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Event daemon for pgsql_api: one LISTEN connection, polling feed and SSE hints for many clients"
+license = "MIT"
+
+[dependencies]
+axum = "0.7"
+base64 = "0.22"
+futures-util = "0.3"
+hmac = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
+tokio-postgres = "0.7"
+tokio-stream = "0.1"
+tower-http = { version = "0.5", features = ["cors"] }
+
+[profile.release]
+lto = true
+codegen-units = 1

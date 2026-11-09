@@ -1,0 +1,24 @@
+# /etc/systemd/system/notifyd.service
+[Unit]
+Description=notifyd - event daemon for pgsql_api
+After=network.target postgresql.service
+
+[Service]
+ExecStart=/usr/local/bin/notifyd
+EnvironmentFile=/etc/notifyd/notifyd.env
+# NOTIFYD_DATABASE_URL=postgres://notify_daemon:CHANGE_ME@127.0.0.1/crm
+# NOTIFYD_SECRET=<same value as PGSQL_EVENT_SECRET for php-fpm>
+# NOTIFYD_AUD=<profile id, or events_aud of the profile>
+# NOTIFYD_LISTEN=127.0.0.1:8090
+DynamicUser=yes
+Restart=always
+RestartSec=2
+# 10k SSE clients = 10k sockets
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
