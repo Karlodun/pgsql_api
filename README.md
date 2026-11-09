@@ -89,3 +89,13 @@ This project is licensed under the MIT License.
 3. Included a security section in the `README.md` to emphasize best practices.
 
 Created with Support of ChatGPT
+
+## Events (near real-time updates)
+
+Change notifications for many clients without keeping database connections open:
+a registry table (`notify.registry`), a change log (`notify.event`) filled by a generic trigger,
+and `notifyd`, a small Rust daemon with one `LISTEN` connection. Clients poll it every ~30 s
+and can keep an SSE stream open for instant hints, then re-read the data through `pgsql.php`
+with their own role, so RLS stays in charge.
+
+See [docs/EVENTS.md](docs/EVENTS.md) (Russian) — requirements, design, API contract, deployment.
